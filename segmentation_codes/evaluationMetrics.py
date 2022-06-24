@@ -1,32 +1,36 @@
 import numpy as np
 import cv2
-from sklearn.metrics import f1_score
 from sklearn.metrics.cluster import adjusted_mutual_info_score
 
-def getFB(methodBoundary,gtBoundary):
-    def getfob2(I1,I2):
-        uniImage=np.where(I1+I2>0, True, False)
-        I1_flat,I2_flat=[],[]
-        for i in range(uniImage.shape[0]):
-            for j in range(uniImage.shape[1]):
-                if uniImage[i,j]:
-                    I1_flat.append(I1[i,j])
-                    I2_flat.append(I2[i,j])
-        return f1_score(np.array(I1_flat),np.array(I2_flat))
-    resultBoundaryH=[]
-    kernels=[]
-    kernels.append(np.array([[0,0,0],[1,1,0],[1,1,0]], np.uint8))
-    kernels.append(np.array([[0,1,1],[0,1,1],[0,0,0]], np.uint8))
-    kernels.append(np.array([[1,1,0],[1,1,0],[0,0,0]], np.uint8))
-    kernels.append(np.array([[0,0,0],[0,1,1],[0,1,1]], np.uint8))
-    for kernel in kernels:
-        resultBoundaryH.append(cv2.morphologyEx(methodBoundary.astype(np.uint8), cv2.MORPH_DILATE, kernel))
-    maxQualMeasure=-np.Inf
-    for B in resultBoundaryH:
-        thisQualMeasure=getfob2(B,gtBoundary)
-    if maxQualMeasure<thisQualMeasure:
-        maxQualMeasure=thisQualMeasure
-    return maxQualMeasure
+def getFB(res,gt,FNweight=.5):
+    res=res.astype(int)
+    gt=gt.astype(int)
+    if np.sum(gt)==0:
+        return 0
+    mapped=np.zeros(gt.shape)
+    TP,TN,FP,FN=0,0,0,0
+    for i in range(res.shape[0]):
+        for j in range(res.shape[1]):
+            if res[i,j]==1:
+                if i-1>=0 and gt[i-1,j]==1 and mapped[i-1,j]==0:
+                    TP+=1
+                    mapped[i-1,j]=1
+                elif j-1>=0 and gt[i,j-1]==1 and mapped[i,j-1]==0:
+                    TP+=1
+                    mapped[i,j-1]=1
+                elif gt[i,j]==1 and mapped[i,j]==0:
+                    TP+=1
+                    mapped[i,j]=1
+                elif j+1<gt.shape[1] and gt[i,j+1]==1 and mapped[i,j+1]==0:
+                    TP+=1
+                    mapped[i,j+1]=1
+                elif i+1<gt.shape[0] and gt[i+1,j]==1 and mapped[i+1,j]==0:
+                    TP+=1
+                    mapped[i+1,j]=1
+                else:
+                    FP+=1
+    FN=max(np.sum(gt)*FNweight-TP,0)
+    return TP/(TP+.5*(FP+FN))
 
 def getSliceLabel(image):
     def getNeighbours8(p,shp):
@@ -62,16 +66,14 @@ def getSliceLabel(image):
     return bSegImage
 
 from skimage.morphology import diamond,square
-def getFOBP(res,gt,doPrint=False,doWrite=False,gamma_o=.7,gamma_p=.1,beta=.5):
-    if (np.max(res)-np.min(res))==1:
-        if np.max(res)>1: res=res-(np.max(res)-1)
-        res=res.astype(np.uint8)
-        res= cv2.morphologyEx(res, cv2.MORPH_OPEN, diamond(2))
-        res= cv2.morphologyEx(res, cv2.MORPH_CLOSE, diamond(2))
-    res=getSliceLabel(res)
-    gt=getSliceLabel(gt)
+def getFOP(res,gt,doPrint=False,doWrite=False,gamma_o=.7,gamma_p=.1,beta=.5,binaryLabel=False):
+    if binaryLabel:
+        gt=np.where(gt==1,1,0)
+
     S=[np.where(res==v,True,False) for v in range(np.min(res),np.max(res)+1)]
     G=[np.where(gt==v,True,False) for v in range(np.min(gt),np.max(gt)+1)]
+    
+
     if doPrint: print(len(S),len(G))
     if doWrite:
         for s in range(len(S)):
@@ -124,7 +126,7 @@ def getFOBP(res,gt,doPrint=False,doWrite=False,gamma_o=.7,gamma_p=.1,beta=.5):
         print("oc/S",oc/len(S),"pc/S",pc/len(S),"oc_/G",oc_/len(G),"pc_/G",oc_/len(G))
         print("fr,fr_",fr,fr_)
     P_op=(oc+fr+beta*pc)/len(S)
-    R_op=(oc_+fr_+beta*pc_)/len(G)
+    R_op=fr/(fc_*len(G)) if (oc_+fr_+beta*pc_)==0 else (oc_+fr_+beta*pc_)/len(G)
     
     if doPrint:
         print("P_op",P_op)
@@ -137,20 +139,31 @@ def getFOBP(res,gt,doPrint=False,doWrite=False,gamma_o=.7,gamma_p=.1,beta=.5):
 
 def nC2(n):
     return (n*(n-1))/2
-def getARI(L1,L2):
-    L1=L1.flatten()
-    L2=L2.flatten()
-    Labels_L1=list(set(L1))
-    posL1={x:i for i,x in enumerate(Labels_L1)}
-    Labels_L2=list(set(L2))
-    posL2={x:i for i,x in enumerate(Labels_L2)}
-    mat=np.zeros((len(Labels_L1),len(Labels_L2)))
-    for l in range(len(L1)):
-        mat[posL1[L1[l]],posL2[L2[l]]]+=1
+
+def ariCalc(res,gt):
+    res=res.flatten()
+    gt=gt.flatten()
+    Labels_res=list(set(res))
+    posres={x:i for i,x in enumerate(Labels_res)}
+    Labels_gt=list(set(gt))
+    posgt={x:i for i,x in enumerate(Labels_gt)}
+    mat=np.zeros((len(Labels_res),len(Labels_gt)))
+    for l in range(len(res)):
+        mat[posres[res[l]],posgt[gt[l]]]+=1
     FT=sum([nC2(mat[i,j]) for i in range(mat.shape[0]) for j in range(mat.shape[1])])
-    ST=sum([nC2(sum(mat[i,:]))*nC2(sum(mat[:,j]) ) for i in range(mat.shape[0]) for j in range(mat.shape[1])])/nC2(len(L1))
+    ST=sum([nC2(sum(mat[i,:]))*nC2(sum(mat[:,j]) ) for i in range(mat.shape[0]) for j in range(mat.shape[1])])/nC2(len(res))
     TT=(sum([nC2(sum(mat[i,:])) for i in range(mat.shape[0])])+sum([nC2(sum(mat[:,j])) for j in range(mat.shape[1])]))/2
     return (FT-ST)/(TT-ST)
+    
+def getARI(res,gt,binaryLabel=False):
+    if binaryLabel:
+        gt=np.where(gt==1,1,0)
+        return ariCalc(res,gt)
+    else:
+        ari1=ariCalc(res,gt)
+        gt_sl=getSliceLabel(gt)
+        if np.max(gt_sl)-np.min(gt_sl)==np.max(gt)-np.min(gt): return ari1
+        else: return max(ari1,ariCalc(res,gt_sl))
 
 def getSeg(bounImage):
     def getWSseg(image):
@@ -218,26 +231,76 @@ def getSeg(bounImage):
 
     return getWSseg(getBasinSeg(bounImage))
 
-def getEvalScores(gtObj,gtBoun,method_boun,method_seg, evalPriority='AMI'):
+def getAMI(res,gt,binaryLabel=False):
+    if binaryLabel:
+        gt=np.where(gt==1,1,0)   
+        return adjusted_mutual_info_score(res.flatten(),gt.flatten())
+    else:
+        ami1=adjusted_mutual_info_score(res.flatten(),gt.flatten())
+        gt_sl=getSliceLabel(gt)
+        if np.max(gt_sl)-np.min(gt_sl)==np.max(gt)-np.min(gt): return ami1
+        else: return max(ami1,adjusted_mutual_info_score(res.flatten(),gt_sl.flatten()))
+
+def getEvalScores(gtObj,gtBoun,method_boun,method_seg, evalPriority='AMI',gamma_o=.75,gamma_p=.1,beta=.5,binaryLabel=False,FNweight=.5,doPrint=False,doWrite=False):
     maxQualMeasure=-np.Inf
     bestMatchedGtIndex=np.Inf
     for g in range(len(gtObj)):
         if evalPriority=='AMI':
-            thisQualMeasure=adjusted_mutual_info_score(method_seg.flatten(),gtObj[g].flatten())
+            thisQualMeasure=getAMI(method_seg,gtObj[g],binaryLabel=binaryLabel)
         elif evalPriority=='ARI':
-            thisQualMeasure=getARI(method_seg,gtObj[g])
+            thisQualMeasure=getARI(method_seg,gtObj[g],binaryLabel=binaryLabel)
         elif evalPriority=='FOP':
-            thisQualMeasure=getFOBP(method_seg,gtObj[g])
+            thisQualMeasure=getFOP(method_seg,gtObj[g],binaryLabel=binaryLabel,gamma_o=gamma_o,gamma_p=gamma_p,beta=beta,doPrint=doPrint,doWrite=doWrite)
         else:
-            thisQualMeasure=getFB(method_boun,gtBoun[g])
+            thisQualMeasure=getFB(method_boun,gtBoun[g],FNweight=FNweight)
             
         if maxQualMeasure<thisQualMeasure:
             maxQualMeasure=thisQualMeasure
             bestMatchedGtIndex=g
             
-    fb=getFB(method_boun,gtBoun[bestMatchedGtIndex])
-    fop=getFOBP(method_seg,gtObj[bestMatchedGtIndex])
-    ami=adjusted_mutual_info_score(method_seg.flatten(),gtObj[bestMatchedGtIndex].flatten())
-    ari=getARI(method_seg,gtObj[bestMatchedGtIndex])
+    fb=getFB(method_boun,gtBoun[bestMatchedGtIndex],FNweight=FNweight)
+    fop=getFOP(method_seg,gtObj[bestMatchedGtIndex],binaryLabel=binaryLabel,gamma_o=gamma_o,gamma_p=gamma_p,beta=beta,doPrint=doPrint,doWrite=doWrite)
+    ami=getAMI(method_seg,gtObj[bestMatchedGtIndex],binaryLabel=binaryLabel)
+    ari=getARI(method_seg,gtObj[bestMatchedGtIndex],binaryLabel=binaryLabel)
     
     return bestMatchedGtIndex, fb, fop, ami, ari
+
+def get_argmaxBestPartFrac(resFiles,gt):
+    G=[np.where(gt==i,True,False) for i in range(np.min(gt),np.max(gt)+1)]
+
+    hLevels,partFracs=[],[]
+    for r in range(len(resFiles)):
+        res=resFiles[r]
+        S=[np.where(res==i,True,False) for i in range(np.min(res),np.max(res)+1)]
+        hLevels.append(len(S))
+        
+        if hLevels[-1]>=len(G):
+            partIntersections=[]
+            for g in G:
+                partIntersections.append([(np.round(np.sum(S[s]&g)/np.sum(g),4),s) for s in range(len(S))]) # if ((S[s]&g)==S[s]).all()
+
+            for PI in partIntersections:
+                PI.sort(reverse=True)
+            gtFixed={i:False for i in range(len(G))}
+            gtFixedCount=0
+            segFixed={i:False for i in range(hLevels[-1])}
+            partFrac=0
+            for i in range(len(segFixed)):
+                thisGtParts=[PI[i] for PI in partIntersections]
+                segNos=np.arange(len(G))
+                thisGtParts, segNos = zip(*sorted(zip(thisGtParts, segNos),reverse=True))
+#                 print(thisGtParts,segNos)
+                
+                for t in range(len(G)):
+                    if not gtFixed[segNos[t]]:
+                        if not segFixed[thisGtParts[t][1]]:
+                            partFrac+=thisGtParts[t][0]
+                            segFixed[thisGtParts[t][1]]=True
+                            gtFixed[segNos[t]]=True
+                            gtFixedCount+=1
+                            break
+                if len(G)==gtFixedCount: break
+            if r>5 and partFrac<partFracs[-1]:
+                return r-1
+            partFracs.append(partFrac)
+    return np.argmax(partFracs)
