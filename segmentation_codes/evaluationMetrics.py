@@ -165,11 +165,16 @@ def getARI(res,gt,binaryLabel=False):
         if np.max(gt_sl)-np.min(gt_sl)==np.max(gt)-np.min(gt): return ari1
         else: return max(ari1,ariCalc(res,gt_sl))
 
-def getSeg(bounImage):
+
+
+
+def getSeg(bounImage,frame=None,segBoundary=False):
+    if frame is not None: frame=cv2.morphologyEx(frame.astype(np.uint8), cv2.MORPH_ERODE, np.ones((3,3))).astype(np.bool)
     def getWSseg(image):
         shp=image.shape
         wsSegImage=np.copy(image)
         toSegMask=np.where(image==0,True,False)
+        if frame is not None: toSegMask=toSegMask&frame
         for i in range(shp[0]):
             for j in range(shp[1]):
                 if toSegMask[i,j]:
@@ -182,13 +187,11 @@ def getSeg(bounImage):
                     elif i-1>=0 and not toSegMask[i-1,j]:
                         wsSegImage[i,j]=image[i-1,j]
         return wsSegImage
-    def getBasinSeg(image,conn=4):
-        if conn!=8:
-            if conn!=4:
-                conn=8
+    def getBasinSeg(image):
         shp=image.shape
         bSegImage=np.zeros(shp,dtype=np.int32)
         toSegMask=np.where(image==1,False,True)
+        if frame is not None: toSegMask=toSegMask&frame
         segNo=0
         for i in range(shp[0]):
             for j in range(shp[1]):
@@ -199,37 +202,29 @@ def getSeg(bounImage):
                 bSegImage[i,j]=segNo
                 while len(Q)>0:
                     q=Q.pop(0)
-                    for n in getNeighbours(q,shp,conn):
+                    for n in get4Neighbours(q,shp):
                         if toSegMask[n]:
                             Q.append(n)
                             toSegMask[n]=False
                             bSegImage[n]=segNo
         return bSegImage
-    def getNeighbours(p,shp,conn):
-        if conn==8:
-            N=[]
-            for i in range(p[0]-1,p[0]+2):
-                if i<0: continue
-                if i>=shp[0]: continue
-                for j in range(p[1]-1,p[1]+2):
-                    if j<0: continue
-                    if j>=shp[1]: continue
-                    if i==p[0] and j==p[1]: continue
-                    N.append((i,j))
-            return N
-        if conn==4:
-            N=[]
-            for i in range(p[0]-1,p[0]+2):
-                if i<0: continue
-                if i>=shp[0]: continue
-                for j in range(p[1]-1,p[1]+2):
-                    if j<0: continue
-                    if j>=shp[1]: continue
-                    if i==p[0] and j==p[1]: continue
-                    if i==p[0] or j==p[1]: N.append((i,j))
-            return N
+    def get4Neighbours(p,shp):
+        N=[]
+        for i in range(p[0]-1,p[0]+2):
+            if i<0: continue
+            if i>=shp[0]: continue
+            for j in range(p[1]-1,p[1]+2):
+                if j<0: continue
+                if j>=shp[1]: continue
+                if i==p[0] and j==p[1]: continue
+                if i==p[0] or j==p[1]: N.append((i,j))
+        return N
+    
+    if segBoundary:
+        return getBasinSeg(bounImage)
+    else:
+        return getWSseg(getBasinSeg(bounImage))
 
-    return getWSseg(getBasinSeg(bounImage))
 
 def getAMI(res,gt,binaryLabel=False):
     if binaryLabel:
