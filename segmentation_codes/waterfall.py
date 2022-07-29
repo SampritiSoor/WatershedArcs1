@@ -74,6 +74,7 @@ def VS_watershed(image):
                         label[p]=0
                 elif label[q]==-2 and dist[q]==0:
                     dist[q]=currdist+1
+                    queue.append(q)
 
         for p in hDict[h]:
             dist[p]=0

@@ -116,15 +116,8 @@ def generateEvaluationPlot(imageName,noOfObj,dpi):
     t=time.time()
     segments_hier_waterfall, boundary_hier_waterfall = get_hierSeg_Waterfall(img_prep)
     t=time.time()-t
-    maxMeasure=-np.Inf
-    targetindex=-np.Inf
-    for s in range(len(segments_hier_waterfall)):
-        thisMeasure=adjusted_mutual_info_score(segments_hier_waterfall[s].flatten(),gtObj[0].flatten())
-        if thisMeasure>maxMeasure:
-            maxMeasure=thisMeasure
-            targetindex=s
-    method_boun=boundary_hier_waterfall[targetindex]
-    method_seg=segments_hier_waterfall[targetindex]
+    method_boun=boundary_hier_waterfall[-2]
+    method_seg=segments_hier_waterfall[-2]
     bestMatchedGtIndex, fb, fop, ami, ari = getEvalScores(gtObj,gtBoun,method_boun,method_seg, evalPriority='ARI')
     showResultPlot(method_boun,method_seg,bestMatchedGtIndex, fb, fop, ami, ari, t, methodName='Waterfall')
 
@@ -145,7 +138,7 @@ def generateEvaluationPlot(imageName,noOfObj,dpi):
 
     t=time.time()
     method_seg = morphological_chan_vese(img,
-                                       iterations=250,
+                                       num_iter=250,
                                        init_level_set='checkerboard',
                                        smoothing=1, lambda1=1, lambda2=1)
     t=time.time()-t
